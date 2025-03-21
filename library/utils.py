@@ -132,7 +132,7 @@ class FuzzySearch:
         """
         self.asq_df = self._read_csv_or_dataframe(asq_df)
         self.subjects_df = self._read_csv_or_dataframe(subjects_df)
-        self.dob_variations = ['dob', 'date of birth', 'date_of_birth', 'date-of-birth']
+        self.dob_variations = ['dob', 'date of birth', 'date_of_birth', 'date-of-birth', 'Date of Birth']
         self.col_name_standard_name = 'name'
         self.col_dob_standard_name = 'date_of_birth'
 

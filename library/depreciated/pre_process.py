@@ -11,6 +11,73 @@ from library.utils import merge_racial_categories
 from tabulate import tabulate
 
 
+def categorize_ess(ess_score):
+    """categorize ESS scores"""
+    mapper_ess = {
+        0: "Unlikely abnormally sleepy",
+        1: "Average daytime sleepiness",
+        2: "Excessively sleepy",
+        3: "Excessively sleepy + seek medical attention",
+        4: "Invalid ESS score",
+    }
+    if ess_score <= 7:
+        return 0
+    elif 8 <= ess_score <= 9:
+        return 1
+    elif 10 <= ess_score <= 15:
+        return 2
+    elif 16 <= ess_score <= 24:
+        return 3
+    else:
+        return 4
+
+def categorize_isi(isi_score):
+    """categorize ISI scores"""
+    mapper_isi = {
+        0: "Not clinically significant",
+        1: "Subthreshold insomnia",
+        2: "Moderate insomnia",
+        3: "Severe insomnia",
+        4: "Invalid ISI score",
+    }
+    if isi_score <= 7:
+        return 0
+    elif 8 <= isi_score <= 14:
+        return 1
+    elif 15 <= isi_score <= 21:
+        return 2
+    elif 22 <= isi_score <= 28:
+        return 3
+    else:
+        return 4
+
+def categorize_circadian(cir_0900):
+    """categorize circadian RMEQ scores"""
+    mapper_circadian = {
+        0: "Definitely evening tendency",
+        1: "Moderately evening type",
+        2: "Neither type",
+        3: "Moderately morning type",
+        4: "Definitely morning type",
+        5: "Invalid circadian score"
+    }
+    if 4 <= cir_0900 <= 7:
+        return 0
+    elif 8 <= cir_0900 <= 11:
+        return 1
+    elif 12 <= cir_0900 <= 17:
+        return 2
+    elif 18 <= cir_0900 <= 21:
+        return 3
+    elif 22 <= cir_0900 <= 25:
+        return 4
+    else:
+        return 5
+
+
+
+
+
 class PreProcess:
     def __init__(self, csv_path: Path):
         """

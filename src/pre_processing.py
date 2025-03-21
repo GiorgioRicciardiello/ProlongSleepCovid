@@ -6,6 +6,7 @@ from typing import Union
 from config.data_paths import data_paths, multi_response_col
 from library.utils import NameDateProcessor, FuzzySearch, compute_sparse_encoding
 from config.columns_use import columns_interest, col_ehr
+
 def pre_processing(df: pd.DataFrame,
                    columns_interest: list) -> pd.DataFrame:
     """
@@ -63,13 +64,8 @@ def pre_processing(df: pd.DataFrame,
 
     return df
 
-def convert_to_float_or_nan(value):
-    try:
-        return float(value)
-    except ValueError:
-        return np.nan
-
-def process_time_column(df:pd.DataFrame, col:str)->pd.DataFrame:
+def process_time_column(df:pd.DataFrame,
+                        col:str)->pd.DataFrame:
     """
     creates the sine and cosine transformations of a time column and computes their arctan2 to
     generate an angle series:
@@ -98,22 +94,96 @@ def process_time_column(df:pd.DataFrame, col:str)->pd.DataFrame:
     df.rename(columns={col + '_angle': col}, inplace=True)
     return df
 
-if __name__ == "__main__":
-    df_raw_data = pd.read_excel(data_paths.get('raw_data').joinpath('results_data_pull.xlsx'))
-    # Drop the 'Unnamed: 0' column if it exists
-    if 'Unnamed: 0' in df_raw_data.columns:
-        df_raw_data.drop(columns='Unnamed: 0', inplace=True)
 
-    # %% Select correct patients
+def categorize_ess(ess_score):
+    """categorize ESS scores"""
+    mapper_ess = {
+        0: "Unlikely abnormally sleepy",
+        1: "Average daytime sleepiness",
+        2: "Excessively sleepy",
+        3: "Excessively sleepy + seek medical attention",
+        4: "Invalid ESS score",
+    }
+    if ess_score <= 7:
+        return 0
+    elif 8 <= ess_score <= 9:
+        return 1
+    elif 10 <= ess_score <= 15:
+        return 2
+    elif 16 <= ess_score <= 24:
+        return 3
+    else:
+        return 4
+
+def categorize_isi(isi_score):
+    """categorize ISI scores"""
+    mapper_isi = {
+        0: "Not clinically significant",
+        1: "Subthreshold insomnia",
+        2: "Moderate insomnia",
+        3: "Severe insomnia",
+        4: "Invalid ISI score",
+    }
+    if isi_score <= 7:
+        return 0
+    elif 8 <= isi_score <= 14:
+        return 1
+    elif 15 <= isi_score <= 21:
+        return 2
+    elif 22 <= isi_score <= 28:
+        return 3
+    else:
+        return 4
+
+def categorize_circadian(cir_0900):
+    """categorize circadian RMEQ scores"""
+    mapper_circadian = {
+        0: "Definitely evening tendency",
+        1: "Moderately evening type",
+        2: "Neither type",
+        3: "Moderately morning type",
+        4: "Definitely morning type",
+        5: "Invalid circadian score"
+    }
+    if 4 <= cir_0900 <= 7:
+        return 0
+    elif 8 <= cir_0900 <= 11:
+        return 1
+    elif 12 <= cir_0900 <= 17:
+        return 2
+    elif 18 <= cir_0900 <= 21:
+        return 3
+    elif 22 <= cir_0900 <= 25:
+        return 4
+    else:
+        return 5
+
+
+if __name__ == "__main__":
+    # df_raw_data = pd.read_excel(data_paths.get('raw_data').get('results_pull'))
+    df_asq = pd.read_csv(data_paths.get('raw_data').get('asq'))
+    # Drop the 'Unnamed: 0' column if it exists
+    if 'Unnamed: 0' in df_asq.columns:
+        df_asq.drop(columns='Unnamed: 0', inplace=True)
+
+    name_mapper = {asq_db: ehr_db for asq_db, ehr_db in zip(df_asq['name'], df_asq['subject_name']) }
+    # %% clean the ASQ dataset
     # only completed records
-    df_raw_data = df_raw_data.loc[df_raw_data['next_module'] == 'complete', :]
+    df_asq = df_asq.loc[df_asq['next_module'] == 'complete', :]
+    # assign 1=male, 0=females
+    df_asq.loc[~df_asq['dem_0500'].isin({0, 1}), 'dem_0500'] = 0
+    # df_asq = df_asq.loc[df_asq['dem_0500'].isin({0, 1}), :]
+    print(df_asq['dem_0500'].value_counts())
+    df_asq['dem_0500'] = 1 - df_asq['dem_0500']
+    print(df_asq['dem_0500'].value_counts())
+
     # subjects that completed more than one ASQ. Select the last one they completed
-    df_unique_subjects = df_raw_data[['name', 'date_of_birth']].copy()
+    df_unique_subjects = df_asq[['name', 'date_of_birth']].copy()
     df_unique_subjects = df_unique_subjects.drop_duplicates(subset=list(df_unique_subjects.columns),
                                                             inplace=False)
     df_unique_subjects.reset_index(inplace=True, drop=True)
 
-    df_selected_records = pd.DataFrame()
+    df_asq_selected_records = pd.DataFrame()
     # fuzzy search to search matches
     for index, row in df_unique_subjects.iterrows():
         # index = 1
@@ -122,100 +192,157 @@ if __name__ == "__main__":
         row_frame = pd.DataFrame(row).transpose()
 
         # search how many matches of the same subject we have in the dataset
-        fuzzy_search = FuzzySearch(asq_df=df_raw_data,
+        fuzzy_search = FuzzySearch(asq_df=df_asq,
                                    subjects_df=row_frame,
                                    )
         matches = fuzzy_search.search_by_name_dob_matches(method='fuzzy', fuzzy_filter=93)
 
         if matches.shape[0] == 1:
-            matches = df_raw_data.loc[df_raw_data['survey_id'] == matches.asq_survey_id.values[0]]
-            df_selected_records = pd.concat([df_selected_records,matches], axis=0)
+            matches = df_asq.loc[df_asq['survey_id'] == matches.asq_survey_id.values[0]]
+            df_asq_selected_records = pd.concat([df_asq_selected_records, matches], axis=0)
             # one single match
             continue
 
         # get the most recent ASQ
-        df_subsets = df_raw_data.loc[df_raw_data['survey_id'].isin(list(matches.asq_survey_id.values))]
+        df_subsets = df_asq.loc[df_asq['survey_id'].isin(list(matches.asq_survey_id.values))]
         df_subsets = df_subsets.sort_values(by='start_time', ascending=False)
         most_recent_row = df_subsets.iloc[[0]]
-        df_selected_records = pd.concat([df_selected_records, most_recent_row], axis=0)
+        df_asq_selected_records = pd.concat([df_asq_selected_records, most_recent_row], axis=0)
 
     # because two names are searched we must remove the pair it found
-    df_selected_records = df_selected_records.drop_duplicates()
+    df_asq_selected_records = df_asq_selected_records.drop_duplicates()
 
-    df_selected_records.reset_index(inplace=True,
-                                    drop=True)
+    df_asq_selected_records.reset_index(inplace=True,
+                                        drop=True)
 
-    # %% apply sparse encoding
-    df_selected_sparse = compute_sparse_encoding(multi_response_col=multi_response_col,
-                                                 df=df_selected_records)
+    # apply sparse encoding
+    df_asq_selected_sparse = compute_sparse_encoding(multi_response_col=multi_response_col,
+                                                     df=df_asq_selected_records)
 
 
-    # %% rename dem questions
-    df_selected_sparse.rename(columns={'dem_0110': 'age',
+    # rename dem questions
+    df_asq_selected_sparse.rename(columns={'dem_0110': 'age',
                                         'dem_0500': 'gender',
                                        'dem_0800': 'bmi',
                                        'dem_1000': 'race',
-                                       },
-                               inplace=True)
-    # %% implement pre-processing
-    df_selected_sparse = pre_processing(df=df_selected_sparse,
-                                        columns_interest=list(columns_interest.keys()))
-    all_asq_idx = df_selected_sparse.survey_id
-    # %% pre-process the EHR
-    df_ehr = pd.read_excel(data_paths.get('raw_data').joinpath('ehr_dataset.xlsx'))
-    df_ehr.columns = df_ehr.columns.map(lambda x: x.rstrip())
-
-    df_ehr['Preexisting sleep symptoms - binary'] = df_ehr['Preexisting sleep symptoms - binary'].map({'yes': 1,
-                                               'no': 0})
-
-    df_ehr = process_time_column(df_ehr, col='Time Cortisol Collected')
+                                           },
+                                  inplace=True)
+    # implement pre-processing
+    df_asq_selected_sparse = pre_processing(df=df_asq_selected_sparse,
+                                            columns_interest=list(columns_interest.keys()))
+    all_asq_idx = df_asq_selected_sparse.survey_id
 
 
-    df_ehr['Cortisol Levels'] = df_ehr['Cortisol Levels'].apply(lambda x: convert_to_float_or_nan(x))
-    # Convert the column to float
-    df_ehr['Cortisol Levels'] = df_ehr['Cortisol Levels'].astype(float)
+    # %% Match the EHR dataset with the ASQ
+    df_ehr = pd.read_excel(data_paths.get('raw_data').get('ehr_admission'))
+    df_ehr['name'] = df_ehr['first_name'] + ' ' + df_ehr['last_name']
+    df_ehr['name'] = df_ehr['name'].str.strip().str.replace(r'\s{2,}', ' ', regex=True)
+    df_ehr['name'] = df_ehr['name'].replace('-', '')
+    df_ehr.rename(columns={'Date of Birth':'dob',
+                           'MRN': 'mrn'}, inplace=True)
 
-    # df_ehr[['Time Cortisol Collected', 'Time Cortisol Collected_angle']]
-    # %% combine the EHR with the ASQ
-    name_processor = NameDateProcessor()
-    subjects_name_df = name_processor.encode_names(df_ehr) #.sort_index(axis=1)
-    subjects_name_date_df = name_processor.encode_date_columns(frame=df_ehr,
-                                                          dob_column='Date of Birth')
+    df_asq_selected_sparse['name'] = df_asq_selected_sparse['name'].replace(name_mapper)
 
-    fuzzy_search = FuzzySearch(asq_df=df_selected_sparse,
+    fuzzy_search = FuzzySearch(asq_df=df_asq_selected_sparse,
                                subjects_df=df_ehr,
                                )
-    matches = fuzzy_search.search_by_name_dob_matches(method='fuzzy', fuzzy_filter=95)
+    df_matches = fuzzy_search.assign_mrn_by_name_dob_matches(fuzzy_filter=92)
 
-    df_ehr.reset_index(drop=False,
-                       names='subject_idx',
-                       inplace=True)
+    df_ehr_missing = df_ehr.loc[~df_ehr['mrn'].isin(df_matches.subject_mrn), :]
 
-    df_ehr_asq_id = pd.merge(left=df_ehr,
-                         right=matches[['asq_survey_id', 'subject_idx']],
-                         left_on='subject_idx',
-                         right_on='subject_idx',
-                         how='inner')
-    col_ehr_list = list(col_ehr.keys())
-    col_ehr_list.append('asq_survey_id')
+    # df_ehr_missing[['name', 'date_of_birth', 'mrn']]
 
-    # keep only the columns of interest for the ehr
-    df_ehr_asq_id = df_ehr_asq_id[col_ehr_list]
-    df_asq_ehr = pd.merge(left=df_selected_sparse,
-                             right=df_ehr_asq_id,
-                             left_on='survey_id',
-                             right_on='asq_survey_id',
-                             how='inner')
-    df_asq_ehr.drop(columns='asq_survey_id',
-                    inplace=True)
+    df_asq_selected_sparse.drop(columns=['asq_survey_id'], inplace=True)
+    df_matches.rename(columns={'asq_survey_id': 'survey_id'}, inplace=True)
 
-    # not all those show answered the ASQ has an EHR
-    asqs_no_ehr = [id_ for id_ in all_asq_idx if not id_ in df_asq_ehr.survey_id.to_list()]
+    # first we merge the mrn with the matches and the ASQ
+    df_asq_ehr = pd.merge(
+        left=df_asq_selected_sparse,
+        right=df_matches[['survey_id', 'subject_mrn']],
+        on='survey_id',
+        how='left'
+    )
+    # drop the mrn column from the ASQ
+    df_asq_ehr.drop(columns=['mrn'], inplace=True)
+    df_asq_ehr.rename(columns={'subject_mrn': 'mrn'}, inplace=True)
+    col_head = ['mrn', 'name', 'date_of_birth', 'survey_id']
+    remaining_cols = [col for col in df_asq_ehr.columns if col not in col_head]
+    df_asq_ehr = df_asq_ehr[col_head + remaining_cols]
+    # using the mrn from the matches we select from the ehr data
+    df_asq_ehr = pd.merge(left=df_asq_ehr,
+                      right=df_ehr,
+                      on='mrn')
+    # %% Inlucde the covid sleep questions
+    df_covid = pd.read_csv(data_paths.get('raw_data').get('covid_clinic'))
+    df_covid.columns = df_covid.columns.str.strip()
 
-    pdf_asq_ehr = pd.concat([df_asq_ehr, df_selected_sparse.loc[df_selected_sparse['survey_id'].isin(asqs_no_ehr), :]])
+    col_covid = ['UNREFRESHING SLEEP', 'DIFFICULTY SLEEPING', 'DAYTIME SLEEPINESS']
+    df_asq_ehr_covid = pd.merge(left=df_asq_ehr,
+                                right=df_covid[['MRN'] + col_covid],
+                                left_on='mrn',
+                                right_on='MRN',
+                                how='left'
+                                )
+
+    df_asq_ehr_covid[col_covid] = df_asq_ehr_covid[col_covid].replace({'No Answer': np.nan})
+
+    # select only males and females
+    df_asq_ehr_covid = df_asq_ehr_covid.loc[df_asq_ehr_covid.gender.isin({0, 1}), :]
+    # %% Pre-process columns and feature enginerring 
+    df_asq_ehr_covid = df_asq_ehr_covid.replace('.', np.nan)
+    # Extract and clean relevant columns for sleep scales and recoding
+    sleep_scales = df_asq_ehr_covid[['ess_0900', 'isi_score', 'rls_probability']]
+    parasomnia_columns = ['par_0205', 'par_0305', 'par_0505', 'par_0605', 'par_1005']
+    sleep_breathing_columns = ['map_0100', 'map_0300', 'map_0600']
+
+    columns_all = [*sleep_scales.columns]  + sleep_breathing_columns # +  parasomnia_columns
+
+    col_par = [col for col in df_asq_ehr_covid.columns if col.startswith('par')]
+    # Recode RLS_probability as binary (1 if likely (3 see pre-processing pipeline), 0 otherwise)
+    df_asq_ehr_covid['rls_binary'] = df_asq_ehr_covid['rls_probability'].map({3: 1}).fillna(0)
+
+    # Create parasomnia variable (1 if any parasomnia activity reported (>0), else 0)
+    df_asq_ehr_covid['parasomnia'] = df_asq_ehr_covid[parasomnia_columns].apply(lambda row: 1 if (row > 0).any() else 0, axis=1)
+
+    # Create sleep-related breathing disorder variable (1 if symptoms present, 0 otherwise)
+    df_asq_ehr_covid['breathing_symptoms'] = df_asq_ehr_covid[sleep_breathing_columns].apply(lambda row: 1 if (row > 0).any() else 0, axis=1)
+    df_asq_ehr_covid[sleep_breathing_columns] = df_asq_ehr_covid[sleep_breathing_columns].clip(lower=0)
+
+    # definition of excessive day time sleepiness patients
+    df_asq_ehr_covid["ess_0900_cat"] = df_asq_ehr_covid["ess_0900"].apply(categorize_ess)
+    df_asq_ehr_covid["ess_0900_bin"] = df_asq_ehr_covid["ess_0900"].apply(lambda row: 1 if row >= 10 else 0)
+    # df_asq_ehr_covid[["ess_0900_bin", "ess_0900"]]
+
+    # definition of insomnia patients
+    df_asq_ehr_covid["isi_score_cat"] = df_asq_ehr_covid["isi_score"].apply(categorize_isi)
+    df_asq_ehr_covid["isi_score_bin"] = df_asq_ehr_covid["isi_score"].apply(lambda row: 1 if row >= 15 else 0)
+    df_asq_ehr_covid['insomnia_bin'] = df_asq_ehr_covid["insomnia"].apply(lambda row: 1 if row >= 3 else 0)
+
+    # Extreme circadian
+    # we will use the column cir_0700 as the extreme circadian
+    df_asq_ehr_covid['cir_0700_cat'] = df_asq_ehr_covid["cir_0700"].apply(categorize_circadian)
+    df_asq_ehr_covid['cir_0700_bin'] = df_asq_ehr_covid['cir_0700'].apply(lambda row: 1 if (3 <= row <= 7 or row > 22) else 0)
+
+    # sleep complains
+    col_sleep = [col for col in df_asq_ehr_covid.columns if 'mdhx_sleep' in col]
+    df_asq_ehr_covid['sleep_problems_bin'] = df_asq_ehr_covid[col_sleep].apply(lambda row: 1 if (row > 0).any() else 0, axis=1)
+
+
+    # days since covid infection
+    df_asq_ehr_covid['days_with_covid'] = pd.to_datetime(df_asq_ehr_covid['date_admin_clinic']) - pd.to_datetime(df_asq_ehr_covid['date_incidence_covid'])
+    df_asq_ehr_covid['days_with_covid'] = df_asq_ehr_covid['days_with_covid'].astype(str).apply(lambda x: x.split(' ')[0])
+    df_asq_ehr_covid['days_with_covid'] = df_asq_ehr_covid['days_with_covid'].replace('NaT', None)
+    df_asq_ehr_covid['days_with_covid'] = pd.to_numeric(df_asq_ehr_covid['days_with_covid'], errors='coerce').fillna(0).astype(int)
+
+
+    # Display a summary of the recoded variables
+    df_asq_ehr_covid[['ess_0900', 'isi_score', 'rls_binary', 'parasomnia', 'breathing_symptoms']].describe()
+
+    columns_all = columns_all + ['parasomnia', 'breathing_symptoms']
+
 
     # %% save the pre-processing result
-    pdf_asq_ehr.to_csv(data_paths.get('pp_data').joinpath('pp_data.csv'), index=False)
-    print(f'Dimensions of pre-process dataset: {pdf_asq_ehr.shape}')
+    df_asq_ehr_covid.to_csv(data_paths.get('pp_data').get('asq_covid_ehr_cortisol'), index=False)
+    print(f'Dimensions of pre-process dataset: {df_asq_ehr.shape}')
 
 

@@ -27,6 +27,7 @@ data_paths = {
         'asq': raw_path.joinpath('asq_for_study.csv'),
         'ehr_admission': raw_path.joinpath('ehr_dataset.xlsx'),
         'cortisol_filtered': raw_path.joinpath('cortisol_filtered.xlsx'),
+        'results_pull': raw_path.joinpath('results_data_pull.xlsx'),
     },
     'pp_data': {
         'root': pp_path,

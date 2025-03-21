@@ -1,84 +1,21 @@
 import pathlib
 import pandas as pd
 from config.data_paths import data_paths
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple
 import seaborn as sns
 import matplotlib.pyplot as plt
 from library.clustering_functions import compute_pca_and_kmeans
 from library.table_one import MakeTableOne
 from library.regression_models_class import ComputeRegression
-from library.hypothesis_testing import HypothesisTesting
-
-def plot_variable(data, x: str,
-                  variable_type: str = "binary",
-                  hue: Optional[str] = None,
-                  title: Optional[str] = None,
-                  xlabel: Optional[str] = None,
-                  figsize: Tuple[int, int] = (8, 6)):
-    """
-    Plots binary or continuous variables with custom styles using Seaborn.
-
-    Parameters:
-    - data: DataFrame containing the data to plot.
-    - x: str, column name for the x-axis variable.
-    - variable_type: str, "binary" or "continuous", type of variable for custom styling.
-    - hue: Optional[str], column name for an optional hue variable.
-    - title: Optional[str], title for the plot.
-    - xlabel: Optional[str], custom label for the x-axis.
-    - figsize: Tuple[int, int], figure size for the plot.
-    """
-    sns.set_theme(style="whitegrid")  # Apply a pleasant Seaborn theme
-
-    # Set up the figure
-    plt.figure(figsize=figsize)
-
-    if variable_type == "binary":
-        # Use countplot with unique colors for each bar by setting hue to x if hue is None
-        palette = sns.color_palette("pastel", n_colors=len(data[x].unique()))
-        ax = sns.countplot(data=data, x=x, hue=hue if hue else x, palette=palette, dodge=False)
-
-        # Remove the legend if we set hue to x for coloring
-        if hue is None:
-            ax.legend_.remove()
-
-        # Set tick labels for binary data if values are 0 and 1
-        unique_values = data[x].unique()
-        if set(unique_values).issubset({0, 1}):
-            ax.set_xticks([0, 1])
-            ax.set_xticklabels(['No', 'Yes'])
-
-        # Add annotations for each bar
-        for p in ax.patches:
-            ax.annotate(f'{int(p.get_height())}',
-                        (p.get_x() + p.get_width() / 2., p.get_height()),
-                        ha='center', va='baseline', fontsize=10, color='black', xytext=(0, 5),
-                        textcoords='offset points')
-        ax.set_ylabel("Count")
-    elif variable_type == "continuous":
-        ax = sns.histplot(data=data, x=x, hue=hue, kde=True, stat="density")
-        ax.set_ylabel("Density")
-
-    # Set x-axis label to provided `xlabel` or default to the column name
-    ax.set_xlabel(xlabel if xlabel else x)
-
-    # Set title if provided
-    if title:
-        ax.set_title(title, fontsize=14, fontweight='bold')
-
-    # Optimize layout
-    plt.tight_layout()
-    plt.grid(alpha=0.1)  # Light grid for better readability
-    plt.show()
-
-
-def summarize_data(df, columns):
-    summary = {}
-    for col in columns:
-        if set(df[col].dropna().unique()).issubset({0, 1}):  # Check if binary (0 or 1 values)
-            summary[col] = df[col].value_counts().to_dict()
-        else:
-            summary[col] = df[col].describe().to_dict()
-    return pd.DataFrame(summary)
+from library.depreciated.hypothesis_testing import HypothesisTesting
+from scipy.stats import chi2_contingency, fisher_exact, mannwhitneyu
+from scipy.stats import spearmanr
+import statsmodels.api as sm
+import numpy as np
+from statsmodels.stats.multitest import multipletests
+from tabulate import tabulate
+from library.visualizations import plot_variable, plot_mixed_correlation_heatmap, summarize_data, plot_symptom_severity
+from library.stat_tests import stats_test_binary_symptoms, stats_test_ordinal_symptoms, correct_pvalues, run_regression_models
 
 
 """
@@ -94,98 +31,71 @@ s
 
 """
 
+# Mapper of the columns used in the study
+col_mapper = {
+    'age': 'Age',
+    'anx_depression': 'Anxiety/Depression',
+    'bmi': 'BMI',
+    'brain_fog': 'Brain Fog',
+    'breathing_symptoms': 'Breathing Symptoms',
+    'cir_0700_bin': 'Extreme Circadian',
+    'covid_vaccine': 'Vaccine Status',
+    'cough': 'Cough',
+    'days_with_covid': 'Duration',
+    'ess_0900': 'ESS Score',
+    'ess_0900_bin': 'Excessive Daytime Sleepiness ESS',
+    'fatigue': 'Fatigue',
+    'fosq_1100': 'FOSQ Score',
+    'gi_symptoms': 'GI Symptoms',
+    'gender': 'Gender',
+    'headaches': 'Headaches',
+    'hospitalized': 'Hospitalized',
+    'insomnia': 'Insomnia',
+    'isi_score_bin': 'Insomnia ISI Score',
+    'isi_score': 'ISI Score',
+    'lethargy': 'Lethargy',
+    'mdhx_5700': 'Hypertension',
+    'mdhx_5800': 'Asthma',
+    'mdhx_5710': 'Chronic Heart Failure',
+    'mdhx_6300': 'High Cholesterol',
+    'mdhx_6310': 'Diabetes Type 2',
+    'nasal_congestion': 'Nasal Congestion',
+    'parasomnia': 'Parasomnia',
+    'post_exercial_malaise': 'Post-Exertional Malaise',
+    'race': 'Race',
+    'rls_binary': 'Restless Legs',
+    'shortness_breath': 'Shortness of Breath',
+    'unrefreshing_sleep': 'Unrefreshing Sleep',
+    'mdhx_sleep_problem_0':'No sleep problem',
+     'mdhx_sleep_problem_1':'Snoring',
+     'mdhx_sleep_problem_2':'My breathing stops at nighttime',
+     'mdhx_sleep_problem_3':'Sleepiness during the day',
+     'mdhx_sleep_problem_4':'Unrefreshing sleep',
+     'mdhx_sleep_problem_5':'Difficulty falling asleep',
+     'mdhx_sleep_problem_6':'Difficulty staying asleep',
+     'mdhx_sleep_problem_7':'Difficulty keeping a normal sleep schedule',
+     'mdhx_sleep_problem_8':'Talk, walk, and/or other behavior in sleep',
+     'mdhx_sleep_problem_9':'Nightmares',
+     'mdhx_sleep_problem_10':'Act out dreams',
+     'mdhx_sleep_problem_11':'Restless legs or unpleasant sensations in legs',
+     'mdhx_sleep_problem_12':'Weakness in muscles when surprised',
+     'mdhx_sleep_problem_13':'Other',
+     'mdhx_sleep_problem_14':'Bruxism',
+}
 
-def plot_mixed_correlation_heatmap(
-        data: pd.DataFrame,
-        binary_cols: List[str],
-        cont_cols: List[str],
-        title: str = "Correlation Heatmap for Mixed Data Types",
-        output_path: pathlib.Path = None
-) -> None:
-    """
-    Correlation heat map for when we have data types of type binary and continuous.
-    :param data: dataframe containing the data to plot.
-    :param binary_cols: list of columns of type continuous
-    :param cont_cols: list of columns of type binary
-    :param title: title of the heatmap
-    :return:
-    """
-    import matplotlib.pyplot as plt
-    from scipy.stats import pointbiserialr, pearsonr
-    from sklearn.metrics import matthews_corrcoef
-    import seaborn as sns
-    import numpy as np
 
-    # Ensure binary columns are strictly binary
-    for col in binary_cols:
-        unique_vals = data[col].unique()
-        if not np.array_equal(np.unique(unique_vals), [0, 1]):
-            raise ValueError(f"Column {col} contains non-binary values: {unique_vals}")
-
-    # Initialize a correlation matrix with NaN
-    columns = binary_cols + cont_cols
-    corr_matrix = pd.DataFrame(np.nan, index=columns, columns=columns)
-
-    # Fill the correlation matrix
-    for i in columns:
-        for j in data.columns:
-            if i == j:
-                # Correlation with itself is always 1
-                corr_matrix.loc[i, j] = 1.0
-            elif i in binary_cols and j in binary_cols:
-                # Use Matthews correlation for binary-binary pairs
-                corr_matrix.loc[i, j] = matthews_corrcoef(data[i], data[j])
-            elif i in cont_cols and j in cont_cols:
-                # Use Pearson correlation for continuous-continuous pairs
-                corr_matrix.loc[i, j] = pearsonr(data[i], data[j])[0]
-            elif (i in binary_cols and j in cont_cols) or (i in cont_cols and j in binary_cols):
-                # Use Point-Biserial correlation for binary-continuous pairs
-                corr_matrix.loc[i, j] = pointbiserialr(data[i], data[j])[0] if i in binary_cols else \
-                    pointbiserialr(data[j], data[i])[0]
-
-    # Plot the heatmap
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(
-        corr_matrix,
-        annot=True,
-        fmt=".2f",
-        cmap="coolwarm",
-        mask=corr_matrix.isna(),
-        cbar_kws={'label': 'Correlation'}
-    )
-    plt.title(title)
-    plt.tight_layout()
-    if output_path:
-        plt.savefig(output_path, dpi=300)
-    plt.show()
 
 
 if __name__ == '__main__':
     # Step 1: Load the dataset
     df_data = pd.read_csv(data_paths.get('pp_data').get('asq_covid_ehr_cortisol'))
-    # Step 2: Load the data dictionary
-    # df_data['dem_0500'].replace({2:1}, inplace=True)
-    # Preliminary analysis and variable preparation
 
-    # Extract and clean relevant columns for sleep scales and recoding
     sleep_scales = df_data[['ess_0900', 'isi_score', 'rls_probability']]
     parasomnia_columns = ['par_0205', 'par_0305', 'par_0505', 'par_0605', 'par_1005']
     sleep_breathing_columns = ['map_0100', 'map_0300', 'map_0600']
 
     columns_all = [*sleep_scales.columns]  + sleep_breathing_columns # +  parasomnia_columns
 
-    col_par = [col for col in df_data.columns if col.startswith('par')]
-    # Recode RLS_probability as binary (1 if likely, 0 otherwise)
-    df_data['rls_binary'] = df_data['rls_probability'].apply(lambda x: 0 if 'Unlikely' in x else 1)
-
-    # Create parasomnia variable (1 if any parasomnia activity reported (>0), else 0)
-    df_data['parasomnia'] = df_data[parasomnia_columns].apply(lambda row: 1 if (row > 0).any() else 0, axis=1)
-
-    # Create sleep-related breathing disorder variable (1 if symptoms present, 0 otherwise)
-    df_data['breathing_symptoms'] = df_data[sleep_breathing_columns].apply(lambda row: 1 if (row > 0).any() else 0, axis=1)
-    df_data[sleep_breathing_columns] = df_data[sleep_breathing_columns].clip(lower=0)
-
-    # TODO: extreme circadian
     # Display a summary of the recoded variables
     df_data[['ess_0900', 'isi_score', 'rls_binary', 'parasomnia', 'breathing_symptoms']].describe()
 
@@ -195,10 +105,10 @@ if __name__ == '__main__':
 
     # %% Create general tables one
     col_maper_tab_one = {
-        'dem_0800': 'BMI',
-        'dem_0110': 'Age',
-        'dem_1000': 'Race',
-        'dem_0500': 'Gender',
+        'bmi': 'BMI',
+        'age': 'Age',
+        'race': 'Race',
+        'gender': 'Gender',
         'mdhx_5800': 'Asthma',
         'mdhx_6300': 'High cholesterol',
         'mdhx_6310': 'Diabetes Type 2',
@@ -207,21 +117,21 @@ if __name__ == '__main__':
         'mdhx_5710': 'Chronic heart failure',
 
     }
-    continuous_var = ['dem_0800',  # BMI
-                      'dem_0110',  # Age
+    continuous_var = ['bmi',  # BMI
+                      'age',  # Age
                       'ess_0900',
                       'isi_score',
                       'map_score',
                       'fosq_1100']
     var_cate = [
-            'dem_0500',  # Gender
+            'gender',  # Gender
             'insomnia',
             'mdhx_5800',
             'mdhx_6300',
             'mdhx_6310',
             'mdhx_5700',
             'mdhx_5710',
-            'dem_1000',
+            'race',
             'lightheadedness',
             'headaches',
             'unrefreshing_sleep',
@@ -282,7 +192,180 @@ if __name__ == '__main__':
                                    output_path=folder_results.joinpath('correlation_heatmap.png')
                                    )
 
-    # %% Statistical test of simple complains
+    # %% Severity plot of selected symptoms
+    col_symptoms = {
+        # 'DIFFICULTY SLEEPING': 'Difficulty\nSleeping',  # DROP
+
+        'insomnia': 'Insomnia',
+        'DAYTIME SLEEPINESS': 'Daytime\nSleepiness',
+        'unrefreshing_sleep': 'Unrefreshing\nSleep',
+
+        'brain_fog': 'Brain\nFog',
+        'fatigue': 'Fatigue',
+        'anx_depression': 'Anxiety\nDepression',
+
+        'lightheadedness': 'Light\nheadedness',
+        'headaches': 'Headaches',
+        'gi_symptoms': 'GI\nSymptoms',
+        'change_in_taste': 'Change\nin Taste',
+
+        'cough': 'Cough',
+        'change_in_smell': 'Change\nin Smell',
+        'nasal_congestion': 'Nasal\nCongestion',
+        'shortness_breath': 'Shortness\nof Breath',
+
+        # 'lethargy': 'Lethargy', # DROP
+    }
+
+    df_stack = df_data[col_symptoms.keys()].fillna(0).copy()
+    # Ensure columns are ordinal and count occurrences by severity
+    severity_counts = {}
+    for symptom_ in col_symptoms.keys():
+        df_stack[symptom_] = df_stack[symptom_].astype(int)
+        counts = df_stack[symptom_].value_counts().sort_index()
+        severity_counts[symptom_] = counts
+
+    # Create a DataFrame with severity levels as rows and symptoms as columns
+    severity_df = pd.DataFrame(severity_counts) #.fillna(0)
+
+    # Reorder severity levels if needed
+    severity_df = severity_df.sort_index()
+    severity_df.rename(columns=col_symptoms, inplace=True)
+    # severity_df = severity_df[sorted(severity_df.columns)]  # sort alphabeticallly
+    # convert to percentages
+    severity_df = severity_df.applymap(lambda x: x*100/df_data.shape[0])
+
+    plot_symptom_severity(severity_df=severity_df,
+                          df_data=df_data)
+
+
+    # %% Table 2: Prevlance main 6 sleep disoders statistical test
+    # We investigated the prevalence of six categories of sleep complaints:
+    # - insomnia,
+    # - excessive daytime sleepiness,
+    # - sleep-related breathing symptoms,
+    # - restless legs,
+    # - parasomnia activity,
+    # - extreme circadian phenotype.
+
+    col_test = {
+        # 'insomnia_bin': 'Insomnia',
+        'isi_score_bin': 'Insomnia ISI Score',
+        # 'DAYTIME SLEEPINESS': 'Daytime\nSleepiness',
+        'ess_0900_bin': 'Excessive Daytime\nSleepiness',
+        'breathing_symptoms': 'Breath\nSymptoms',
+        'parasomnia': 'Parasomnia',
+        'rls_binary': 'Restless legs',
+        'cir_0700_bin': 'Extreme Circadian',
+    }
+
+    df_describe = df_data[[*col_test.keys()]].describe().loc[['min','max']].T
+    print(tabulate(df_describe,
+                       headers=df_describe.columns,
+                       tablefmt='grid'))
+
+    # Running the corrected function with simulated data
+    df_strata_symptoms_by_gender = stats_test_binary_symptoms(data=df_data,
+                                                             symptoms_mapping=col_test,
+                                                             gender_col='gender',
+                                                              binary_cut_off=3)
+
+    df_strata_symptoms_by_gender_corrected = correct_pvalues(df=df_strata_symptoms_by_gender,
+                    pvalue_columns=['P-value (Fisher)'])
+
+    df_strata_symptoms_ordinal_by_gender = stats_test_ordinal_symptoms(data=df_data,
+                                                              symptoms_mapping=col_test,
+                                                              gender_col='gender')
+
+    df_strata_symptoms_ordinal_by_gender_corrected = correct_pvalues(df=df_strata_symptoms_ordinal_by_gender,
+                    pvalue_columns=['P-value (Mann-Whitney U)'])
+    #%% MCF
+    def group_mcf(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Classifies subjects based on specific symptom severity thresholds.
+        For each symptom in the provided conditions, a new boolean column is added to the DataFrame,
+        indicating whether the subject meets or exceeds the threshold, thus being classified as MCF (true).
+
+        Parameters:
+        df (pd.DataFrame): A DataFrame containing symptom columns.
+
+        Returns:
+        pd.DataFrame: The original DataFrame with additional boolean columns indicating MCF classification.
+
+        Example:
+        Conditions:
+            - ('fatigue', 4): MCF if 'fatigue' >= 4
+            - ('brain_fog', 1): MCF if 'brain_fog' >= 1
+            - ('lightheadedness', 1): MCF if 'lightheadedness' >= 1
+            - ('unrefreshing_sleep', 1): MCF if 'unrefreshing_sleep' >= 1
+
+        The function appends columns named '<symptom>_mcf' with True/False values.
+        """
+        # List of tuples with symptom column names and threshold values
+        conditions = [
+            ('fatigue', 4),
+            ('brain_fog', 1),
+            ('lightheadedness', 1),
+            ('unrefreshing_sleep', 1)
+        ]
+
+        # Apply condition to classify as MCF (True if value >= threshold)
+        for column, threshold in conditions:
+            if column in df.columns:
+                df[f'{column}_mcf'] = df[column] >= threshold
+            else:
+                print(f"Warning: Column '{column}' not found in DataFrame.")
+
+        return df
+
+
+    df_data = pd.DataFrame(df_data)
+    # %% Prevalence of Specific Long COVID Sleep Complaints
+    # Calculate percentage of  mayor sleep complains who ansered yes
+    # Check if any of the three columns have a value > 1
+    subjects_with_gt_1 = (df_data[['DIFFICULTY SLEEPING',
+                                   'DAYTIME SLEEPINESS',
+                                   'UNREFRESHING SLEEP']] > 1).any(axis=1)
+    df_data['any_sleep_compaint'] = subjects_with_gt_1.astype(int)
+    percentage = (subjects_with_gt_1.sum() / len(df_data)) * 100
+
+
+    col_test = ['parasomnia',  'rls_binary',
+                'breathing_symptoms', 'ess_0900_bin',
+                'isi_score_bin', 'insomnia_bin',
+                'cir_0700_bin', 'any_sleep_compaint']
+    # Calculate counts and percentages for each column where the value == 1
+    counts = {}
+    for col in col_test:
+        df_counts = df_data.groupby(by="gender")[col].value_counts().reset_index('gender').reset_index(col)
+        # Count only those who answered the response, exclude non responders for the count
+        df_counts = df_counts.loc[(df_counts[col] == 1) & (df_counts['gender'].isin({0, 1})), :]
+        n_total =  df_data.loc[~df_data[col].isna()].shape[0]
+        df_counts['percentage'] = (df_counts['count'] * 100) / n_total
+        # not grouping for the total
+        df_counts['total_count'] =  df_data.loc[df_data[col] == 1].shape[0]
+        df_counts['total_percentage'] =  (df_data.loc[df_data[col] == 1].shape[0] * 100) / n_total
+        counts[col] = df_counts
+        print(f'\n{col}\n{df_counts}')
+
+
+    # Perform the appropriate test for each binary response column
+    final_results = {}
+    small_frequency_threshold = 5
+    for col in col_test:
+        contingency_table = pd.crosstab(df_data['gender'], df_data[col])
+        if contingency_table.shape == (2, 2) and contingency_table.values.min() < small_frequency_threshold:
+            # Fisher's Exact Test
+            odds_ratio, p_value = fisher_exact(contingency_table, alternative='two-sided')
+            final_results[col] = f"Fisher's Exact: p={round(p_value, 4)}"
+        else:
+            # Chi-Square Test
+            chi2_stat, p_value, _, _ = chi2_contingency(contingency_table)
+            final_results[col] = f"Chi-Square: p={round(p_value, 4)}"
+
+    # Convert to DataFrame for better visualization
+    final_results_df = pd.DataFrame(list(final_results.items()), columns=['binary_response', 'test_result'])
+
 
     # %% 1 What is the prevalence of sleep disorders in the Long COVID Clinic, measured by validated scales?
     summary_df = summarize_data(df_data, columns=['ess_0900',
@@ -307,6 +390,10 @@ if __name__ == '__main__':
                       title=cont_.capitalize().replace('_', ' '),
                       )
 
+    # %% Rename columns before analysis
+    # Rename DataFrame columns using the formalized names
+    df_data.rename(columns=col_mapper, inplace=True)
+
     # %% 2.	Research Question: Are sleep disturbance symptoms connected with other symptoms? Do they commonly occur with
     # certain other symptoms?
     vars_of_interest = ['headaches',
@@ -321,12 +408,16 @@ if __name__ == '__main__':
                         'cough',
                         'shortness_breath',
                         'gi_symptoms']
+
+    vars_of_interest = [col_mapper.get(var) for var in vars_of_interest]
+
     vars_of_interest = [var for var in vars_of_interest if var in df_data.columns]
 
     df_data[vars_of_interest] = df_data[vars_of_interest].apply(pd.to_numeric, errors='coerce')
     df_nan_count = (df_data[vars_of_interest].isna().sum() / df_data.shape[0]) * 100
     df_nan_count = df_nan_count.reset_index()
     df_nan_count.columns = ['Variable', 'NaN Percentage']
+    print(df_nan_count)
 
     df_for_pca = df_data[vars_of_interest].dropna()
 
@@ -338,7 +429,9 @@ if __name__ == '__main__':
      q2_series_clusters) = compute_pca_and_kmeans(df=df_for_pca,
                            n_clusters_kmeans=2,
                            n_clusters_biplot=4,
-                           figsize_biplot=(16,8)
+                           figsize_biplot=(12,8),
+                            figsize_pca=(6,6),
+                            figsize_kmeans=(6,6)
                            )
     # make a table one of the groups identified in the PCA and Kmeans
     df_q2_data = pd.concat([df_for_pca[vars_of_interest], q2_series_clusters,], axis=1)
@@ -365,13 +458,15 @@ if __name__ == '__main__':
 
 
     # %% 3.	Research Question: Do specific sleep disturbances tend to co-occur?
-    vars_of_interest = ['dem_0500',
+    vars_of_interest = ['gender',
                         'ess_0900',
                         'isi_score',
                         'rls_binary',
                         'parasomnia',
                         'breathing_symptoms']
-    vars_of_interest = vars_of_interest # + parasomnia_columns
+    vars_of_interest = [col_mapper.get(var) for var in vars_of_interest]
+
+    vars_of_interest = [var for var in vars_of_interest if var in df_data.columns]
 
     df_data_for_pca = df_data[vars_of_interest].dropna()
     df_data[vars_of_interest] = df_data[vars_of_interest].apply(pd.to_numeric, errors='coerce')
@@ -411,25 +506,14 @@ if __name__ == '__main__':
     )
     df_q3_hypothesis_test_results = tester.run_tests()
 
-    # Search clinical association by the correlation of the features and drawing a network
-    categorical_var = [var for var in categorical_var if not var in binary_vars]
-    # q3_network_results = correlation_and_network_analysis_by_type(data=df_q3_data,
-    #                                  continuous_vars=continuous_var,
-    #                                  ordinal_vars=categorical_var,
-    #                                  binary_vars=binary_vars,
-    #                                 correlation_threshold=0.3
-    #                                  )
-
-    # Access the results
-    print("Degree Centrality:")
-    print(q3_network_results["degree_centrality"])
-
-    print("Betweenness Centrality:")
-    print(q3_network_results["betweenness_centrality"])
 
 
     # %% 4.	Research Question: Do specific sleep disturbances tend to co-occur?
-    vars_of_interest = [col for col in df_data if col.startswith('mdhx_sleep_problem')]
+    vars_of_interest = [new_col for col, new_col in col_mapper.items() if col.startswith('mdhx_sleep_problem')]
+
+
+    vars_of_interest = [var for var in vars_of_interest if var in df_data.columns]
+
 
     df_data_for_pca = df_data[vars_of_interest].dropna()
 
@@ -440,8 +524,10 @@ if __name__ == '__main__':
      q4_explained_variance,
      q4_series_clusters) = compute_pca_and_kmeans(df=df_data_for_pca,
                            n_clusters_kmeans=2,
-                           n_clusters_biplot=5,
-                           figsize_biplot=(16,10)
+                           n_clusters_biplot=4,
+                           figsize_biplot=(20,8),
+                            figsize_pca=(6,6),
+                            figsize_kmeans=(6,6)
                            )
     # make a table one of the groups identified in the PCA and Kmeans
     df_q4_data = pd.concat([df_data_for_pca[vars_of_interest], q4_series_clusters, ], axis=1)
@@ -466,9 +552,9 @@ if __name__ == '__main__':
     df_q4_hypothesis_test_results = tester.run_tests()
 
     # %% 5.	Research Question: What are the risk factors for long COVID sleep disturbances?
-    vars_of_interest = ['dem_0500',  # gender
-                        'dem_0800',  # BMI
-                        'dem_1000',  # race
+    vars_of_interest = ['gender',  # gender
+                        'bmi',  # BMI
+                        'race',  # race
                         'hospitalized',
                         'covid_vaccine',
                         'parasomnia',
@@ -509,8 +595,8 @@ if __name__ == '__main__':
                          'brain_fog',
                          'breathing_symptoms',
                          'cough',
-                         # 'dem_1000',  # race
-                        'dem_0500',  # gender
+                         # 'race',  # race
+                        'gender',  # gender
                          'fatigue',
                          'gi_symptoms',
                          'headaches',
@@ -524,15 +610,15 @@ if __name__ == '__main__':
                          'shortness_breath',
                          'unrefreshing_sleep']
 
-    continuous_var = ['dem_0800',  # BMI
-                      'dem_0110',  # Age
+    continuous_var = ['bmi',  # BMI
+                      'age',  # Age
                       'ess_0900',
                       'isi_score' ]
 
     table_one_race = MakeTableOne(df=df_data,
                  categorical_var=categorical_var,
                  continuous_var=continuous_var,
-                 # strata='dem_1000'
+                 # strata='race'
                                   )
 
     df_table_one_race = table_one_race.create_table()
@@ -540,11 +626,6 @@ if __name__ == '__main__':
 
 
     # %% 7.	Research Question: Does the duration of the Long COVID symptoms influence sleep disturbance severity and type?
-    df_data['days_with_covid'] = pd.to_datetime(df_data['date_admin_clinic']) - pd.to_datetime(df_data['date_incidence_covid'])
-    df_data['days_with_covid'] = df_data['days_with_covid'].astype(str).apply(lambda x: x.split(' ')[0])
-    df_data['days_with_covid'] = df_data['days_with_covid'].replace('NaT', None)
-    df_data['days_with_covid'] = pd.to_numeric(df_data['days_with_covid'], errors='coerce').fillna(0).astype(int)
-
     # it's a constant column, not meaningful to implement
     # vars_of_interest = [col for col in df_data if col.startswith('mdhx_sleep_problem')]
     # df_data['prior sleep disturbance'] = df_data[vars_of_interest].apply(lambda row: 1 if any(row != 0) else 0, axis=1)
@@ -560,10 +641,10 @@ if __name__ == '__main__':
                     'map_0600'
                     ]
 
-    var_adjust = ['dem_0110',  # Age
-                  'dem_0800',  # BMI
-                  'dem_1000',  # race
-                  'dem_0500',  # gender
+    var_adjust = ['age',  # Age
+                  'bmi',  # BMI
+                  'race',  # race
+                  'gender',  # gender
                   ]
     vars_all = var_interest + var_adjust + [var_outcome]
 
@@ -578,8 +659,8 @@ if __name__ == '__main__':
         'days_with_covid',
         'isi_score',
         'ess_0900',
-        'dem_0110',
-        'dem_0800'
+        'age',
+        'bmi'
     ]
     # Apply the normalization to each specified column
     for col in columns_to_normalize:
@@ -625,17 +706,61 @@ if __name__ == '__main__':
                                       )
     df_summary_adjusted = model_reg_adjusted.compute_regression()
 
-    # %% Better clustering method
+    # %% regression models
+    vars_of_interest = ['age',
+                        'gender',
+                        'bmi',
+                        'race',
+                        'hospitalized',
+                        'covid_vaccine',
+                        'days_with_covid',
+                        'parasomnia',
+                        ]
+
+    targets_of_interest = ['isi_score_bin',  # target 1,
+                        'ess_0900_bin',  # target 2
+                        'rls_binary',  # target 3
+                        'breathing_symptoms',  # target 4
+                        'cir_0700_bin',  # target 5
+                        ]
+
+    vars_of_interest = [col_mapper.get(var) for var in
+                        vars_of_interest + targets_of_interest]
+    targets_of_interest = [col_mapper.get(var) for var in targets_of_interest]
+    vars_of_interest = [var for var in vars_of_interest if var in df_data.columns]
+    df_model = df_data[vars_of_interest].copy()
+    # low reponses for race 5 and 3, so we merge into other category
+    df_model['Race'] = df_model['Race'].replace({3: 5})
+
+    # multicolinearty
+    cont_cols = ['Age', 'BMI', 'Duration', 'Race']
+    plot_mixed_correlation_heatmap(data=df_model,
+                                   binary_cols=[col for col in vars_of_interest if not col in cont_cols],
+                                   cont_cols=cont_cols,
+                                   output_path=None
+                                   )
 
 
-
-
-
-
-
-
-
-
-
-
-
+    df_reg_results = run_regression_models(df=df_model, targets=targets_of_interest)
+    # format the columns and names
+    # df_reg_results.Variable.unique()
+    mapping_variables_regression = {
+        "Intercept": "Intercept",
+        "C(Gender, Treatment(reference=0))[T.1]": "Male",
+        "Hospitalized[T.1]": "Hospitalized (Yes)",
+        "C(Q('Vaccine Status'), Treatment(reference=0))[T.1]": "Vaccine (Yes)",
+        "C(Race, Treatment(reference=0))[T.2]": "Race 2",
+        "C(Race, Treatment(reference=0))[T.4]": "Race 4",
+        "C(Race, Treatment(reference=0))[T.5]": "Race 5",
+        "C(Race, Treatment(reference=0))[T.6]": "Race 6",
+        "Age": "Age",
+        "Duration": "Duration",
+        "BMI": "BMI"
+    }
+    df_reg_results['Variable'] = df_reg_results.Variable.map(mapping_variables_regression)
+    df_reg_results['p-value'] = df_reg_results['p-value'].apply(
+        lambda p: f"{float(p):.4}" if float(p) >= 0.001 else "p < 0.001"
+    )
+    df_reg_results['OR (95% CI)'] = df_reg_results['OR (95% CI)'].apply(
+        lambda s: s.replace(" ", "\n", 1)
+    )
