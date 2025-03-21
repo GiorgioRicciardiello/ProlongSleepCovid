@@ -715,13 +715,14 @@ if __name__ == '__main__':
                         'covid_vaccine',
                         'days_with_covid',
                         'parasomnia',
+                        'cir_0700_bin'
                         ]
 
     targets_of_interest = ['isi_score_bin',  # target 1,
                         'ess_0900_bin',  # target 2
                         'rls_binary',  # target 3
                         'breathing_symptoms',  # target 4
-                        'cir_0700_bin',  # target 5
+                        # 'cir_0700_bin',  # target 5
                         ]
 
     vars_of_interest = [col_mapper.get(var) for var in
@@ -741,13 +742,14 @@ if __name__ == '__main__':
                                    )
 
 
-    df_reg_results = run_regression_models(df=df_model, targets=targets_of_interest)
+    df_reg_results = run_regression_models(df=df_model.copy(), \
+                                           targets=targets_of_interest)
     # format the columns and names
     # df_reg_results.Variable.unique()
     mapping_variables_regression = {
         "Intercept": "Intercept",
         "C(Gender, Treatment(reference=0))[T.1]": "Male",
-        "Hospitalized[T.1]": "Hospitalized (Yes)",
+        "C(Hospitalized, Treatment(reference=0))[T.1]": "Hospitalized (Yes)",
         "C(Q('Vaccine Status'), Treatment(reference=0))[T.1]": "Vaccine (Yes)",
         "C(Race, Treatment(reference=0))[T.2]": "Race 2",
         "C(Race, Treatment(reference=0))[T.4]": "Race 4",
@@ -755,7 +757,9 @@ if __name__ == '__main__':
         "C(Race, Treatment(reference=0))[T.6]": "Race 6",
         "Age": "Age",
         "Duration": "Duration",
-        "BMI": "BMI"
+        "BMI": "BMI",
+        "C(Q('Extreme Circadian'), Treatment(reference=0))[T.1]": 'Extreme Circadian (Yes)',
+        "C(Parasomnia, Treatment(reference=0))[T.1]": 'Parasomnia (Yes)',
     }
     df_reg_results['Variable'] = df_reg_results.Variable.map(mapping_variables_regression)
     df_reg_results['p-value'] = df_reg_results['p-value'].apply(

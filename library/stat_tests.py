@@ -229,7 +229,7 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
 
 
     # Convert categorical columns to categorical types
-    for cat in ['Gender', 'Race', 'Hospitalized',  'Vaccine Status']:
+    for cat in ['Gender', 'Race', 'Hospitalized', 'Extreme Circadian', 'Vaccine Status']:
         df[cat] = df[cat].astype('category')
 
     # Define models as a list of tuples (outcome, list of predictors)
@@ -250,8 +250,11 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
         # Gender and Race are treated as categorical with reference category 0.
         formula = (
             f"Q('{outcome}') ~ Age + Duration + "
-            f"C(Gender, Treatment(reference=0)) + BMI + Hospitalized + "
-            f"C(Q('Vaccine Status'), Treatment(reference=0))  +"
+            f"C(Parasomnia, Treatment(reference=0)) + "
+            f"C(Q('Extreme Circadian'), Treatment(reference=0)) + "
+            f"C(Gender, Treatment(reference=0)) + BMI + "
+            f"C(Hospitalized, Treatment(reference=0)) + "
+            f"C(Q('Vaccine Status'), Treatment(reference=0)) + "
             f"C(Race, Treatment(reference=0))"
         )
 

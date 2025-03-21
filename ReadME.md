@@ -18,17 +18,19 @@ The file sources are merged with the script `src/create_datasets_with_asq.py`. T
 
 
 ## Pre-processing 
-Objective
-The pre-process was computed in the 'src/pre_processing.py'
-2). 
+The pre-process was computed in the `src/pre_processing.py`
 
 ## Analysis
 The file with the main statistical analysis is in `analyses_research_publication.py`, the file contains the analysis of the seven different hypothesis for the study. 
 
-The statistical analysis are hypothesis testing using statistical signifiance test and PCA with K-means to explore latent space and cluster of disease/symptoms. 
+The statistical analysis are hypothesis testing using statistical significance test and PCA with K-means to explore latent space and cluster of disease/symptoms. 
+![Biplot of PCA with K-means Clustering](results/figure_biplot.png)
+
 
 The script explore the following questions:
 1. What is the prevalence of sleep disorders in the Long COVID Clinic, measured by validated scales?
+![Prevalence symptoms](results/publication_results/prevalence_symptoms.png)
+
 2. Are sleep disturbance symptoms connected with other symptoms? Do they commonly occur with certain other symptoms?
 3. Do specific sleep disturbances tend to co-occur?
 4. Do specific sleep disturbances tend to co-occur? (looking only at medical history)
