@@ -227,9 +227,8 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
     for col in ['Duration', 'Age', 'BMI']:
         df[col] = z_score_norm(df[col])
 
-
     # Convert categorical columns to categorical types
-    for cat in ['Gender', 'Race', 'Hospitalized', 'Extreme Circadian', 'Vaccine Status']:
+    for cat in ['Gender', 'Race', 'Hospitalized', 'Vaccine Status']:  # 'Extreme Circadian',
         df[cat] = df[cat].astype('category')
 
     # Define models as a list of tuples (outcome, list of predictors)
@@ -240,18 +239,20 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
     # List to store regression results
     results = []
     # Run each model using the formula interface
-    for outcome, predictors in models:
+    for outcome in targets:
+        predictors = [col for col in df.columns if col not in targets or col == outcome]
+        predictors.remove(outcome)
         # outcome = models[0][0]
         # predictors = models[0][1]
-        print(f'Running regression model for outcome: {outcome}')
+        print(f'Running regression model for outcome: {outcome} \n\t\t: {predictors}')
 
         # Build the formula string.
         # We wrap variables with spaces in Q(), and mark categorical predictors using C(...).
         # Gender and Race are treated as categorical with reference category 0.
         formula = (
             f"Q('{outcome}') ~ Age + Duration + "
-            f"C(Parasomnia, Treatment(reference=0)) + "
-            f"C(Q('Extreme Circadian'), Treatment(reference=0)) + "
+            # f"C(Parasomnia, Treatment(reference=0)) + "
+            # f"C(Q('Extreme Circadian'), Treatment(reference=0)) + "
             f"C(Gender, Treatment(reference=0)) + BMI + "
             f"C(Hospitalized, Treatment(reference=0)) + "
             f"C(Q('Vaccine Status'), Treatment(reference=0)) + "
@@ -259,10 +260,11 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
         )
 
         # Drop rows with missing values in variables used by this model
-        df_current_model = df[predictors + [outcome]].dropna()
-
+        df_current_model = df[predictors + [outcome]].dropna().copy()
+        df_current_model[outcome] = df_current_model[outcome].astype(int)
         # Fit the logistic regression model with robust covariance (HC1)
         model = smf.logit(formula=formula, data=df_current_model).fit(cov_type='HC1', disp=False)
+
 
         # Extract and store results for each predictor in the model (including the Intercept)
         for param, coef in model.params.items():

@@ -707,6 +707,16 @@ if __name__ == '__main__':
     df_summary_adjusted = model_reg_adjusted.compute_regression()
 
     # %% regression models
+    race_labels = {
+        0: 'Blank',
+        1: 'White/Caucasian',
+        2: 'Black/African American',
+        3: 'American Indian/Alaska Native',
+        4: 'Asian',
+        5: 'Pacific Islander',
+        6: 'Two Races'
+    }
+
     vars_of_interest = ['age',
                         'gender',
                         'bmi',
@@ -714,33 +724,44 @@ if __name__ == '__main__':
                         'hospitalized',
                         'covid_vaccine',
                         'days_with_covid',
-                        'parasomnia',
-                        'cir_0700_bin'
+                        # 'parasomnia',
+                        # 'cir_0700_bin'
                         ]
 
     targets_of_interest = ['isi_score_bin',  # target 1,
                         'ess_0900_bin',  # target 2
                         'rls_binary',  # target 3
                         'breathing_symptoms',  # target 4
-                        # 'cir_0700_bin',  # target 5
+                       'parasomnia', # target 5
+                       'cir_0700_bin' # target 6
                         ]
 
+    df_model = df_data[vars_of_interest + targets_of_interest].copy()
+    df_model = df_model.rename(columns=col_mapper)
     vars_of_interest = [col_mapper.get(var) for var in
                         vars_of_interest + targets_of_interest]
     targets_of_interest = [col_mapper.get(var) for var in targets_of_interest]
-    vars_of_interest = [var for var in vars_of_interest if var in df_data.columns]
-    df_model = df_data[vars_of_interest].copy()
-    # low reponses for race 5 and 3, so we merge into other category
-    df_model['Race'] = df_model['Race'].replace({3: 5})
 
-    # multicolinearty
+    # because of numpy.linalg.LinAlgError: Singular matrix we have to do this
+    df_model['Race'] = df_model['Race'].map(race_labels)
+    race_counts = df_model['Race'].value_counts()
+    rare_races = race_counts[race_counts < 7].index
+    df_model['Race'] = df_model['Race'].replace(rare_races, 'Other').astype('category')
+    new_race_labels = {'White/Caucasian': 0,
+                         'Asian': 1,
+                         'Two Races': 2,
+                         'Black/African American': 3,
+                         'Other': 4}
+    new_race_labels_inv = {val: key for key, val in new_race_labels.items()}
+    df_model['Race'] = df_model['Race'].map(new_race_labels)
+
+    # Multicolinearty
     cont_cols = ['Age', 'BMI', 'Duration', 'Race']
     plot_mixed_correlation_heatmap(data=df_model,
                                    binary_cols=[col for col in vars_of_interest if not col in cont_cols],
                                    cont_cols=cont_cols,
                                    output_path=None
                                    )
-
 
     df_reg_results = run_regression_models(df=df_model.copy(), \
                                            targets=targets_of_interest)
@@ -751,15 +772,14 @@ if __name__ == '__main__':
         "C(Gender, Treatment(reference=0))[T.1]": "Male",
         "C(Hospitalized, Treatment(reference=0))[T.1]": "Hospitalized (Yes)",
         "C(Q('Vaccine Status'), Treatment(reference=0))[T.1]": "Vaccine (Yes)",
-        "C(Race, Treatment(reference=0))[T.2]": "Race 2",
-        "C(Race, Treatment(reference=0))[T.4]": "Race 4",
-        "C(Race, Treatment(reference=0))[T.5]": "Race 5",
-        "C(Race, Treatment(reference=0))[T.6]": "Race 6",
+        "C(Race, Treatment(reference=0))[T.1]": f"{new_race_labels_inv.get(1)} (Reference White/Caucasian)",
+        "C(Race, Treatment(reference=0))[T.4]": f"{new_race_labels_inv.get(4)} (Reference White/Caucasian)",
+        "C(Race, Treatment(reference=0))[T.2]": f"{new_race_labels_inv.get(2)} (Reference White/Caucasian)",
         "Age": "Age",
         "Duration": "Duration",
         "BMI": "BMI",
-        "C(Q('Extreme Circadian'), Treatment(reference=0))[T.1]": 'Extreme Circadian (Yes)',
-        "C(Parasomnia, Treatment(reference=0))[T.1]": 'Parasomnia (Yes)',
+        # "C(Q('Extreme Circadian'), Treatment(reference=0))[T.1]": 'Extreme Circadian (Yes)',
+        # "C(Parasomnia, Treatment(reference=0))[T.1]": 'Parasomnia (Yes)',
     }
     df_reg_results['Variable'] = df_reg_results.Variable.map(mapping_variables_regression)
     df_reg_results['p-value'] = df_reg_results['p-value'].apply(
