@@ -240,6 +240,7 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
     results = []
     # Run each model using the formula interface
     for outcome in targets:
+        # outcome = 'Extreme Circadian'
         predictors = [col for col in df.columns if col not in targets or col == outcome]
         predictors.remove(outcome)
         # outcome = models[0][0]
@@ -280,7 +281,17 @@ def run_regression_models(df: pd.DataFrame, targets:List[str]):
                 'Standard Error': f'{se:.3f}',
                 'OR (95% CI)': f"{or_val:.3f} {or_conf_str}",
                 'p-value': f"{pval:.3e}",
-                'Sample': df.shape[0]
+                'Sample': df.shape[0],
+                'AIC': model.aic,
+                'BIC': model.bic,
+                'Log-Likelihood': model.llf,
+                'Null Log-Likelihood': model.llnull,
+                'LR Statistic': model.llr,
+                'LR p-value': model.llr_pvalue,
+                'McFadden R2': model.prsquared,
+                'N': model.nobs,
+                'DF Model': model.df_model,
+                'DF Residuals': model.df_resid
             })
 
     # Convert the results to a DataFrame for summary reporting
